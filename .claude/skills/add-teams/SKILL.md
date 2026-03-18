@@ -23,17 +23,23 @@ npm ls @azure/msal-node @microsoft/microsoft-graph-client 2>/dev/null || npm ins
 
 ### 2. Authorize Graph API Access
 
-To let NanoClaw access the Graph API on your behalf, you need to register it as an app in your Microsoft 365 tenant. This does NOT create a new organization — it just creates an OAuth client ID within your existing account, similar to creating a Google OAuth client.
+NanoClaw uses a registered app in your Microsoft 365 tenant to access the Graph API on your behalf. Someone in your organization needs to set this up once — after that, everyone else just needs the Tenant ID and Client ID.
 
-AskUserQuestion: Do you already have a Microsoft Graph API app registration (Client ID + Tenant ID) for NanoClaw?
+AskUserQuestion: Has someone in your organization already set up the NanoClaw app registration?
 
-**If no**, guide the user through creating one:
+**If yes (most users):**
 
-1. Sign in to https://portal.azure.com with your normal Microsoft 365 account
+Ask them for the **Tenant ID** and **Client ID**. That's all you need — skip to the credentials prompt below.
+
+**If no (first-time setup for your organization):**
+
+You'll create an OAuth app registration in your tenant. This is a one-time step — other users in your org will reuse the same Client ID.
+
+1. Sign in to https://portal.azure.com with your Microsoft 365 account
 2. Search for "App registrations" in the top search bar → click it
 3. Click **New registration**
 4. Name: `NanoClaw` (or whatever you prefer)
-5. Supported account types: "Accounts in this organizational directory only"
+5. Supported account types: **"Single tenant only"** (the one showing your tenant name)
 6. Redirect URI: leave blank (we use device code flow)
 7. Click **Register**
 8. On the app's overview page, copy the **Application (client) ID** and **Directory (tenant) ID**
@@ -42,11 +48,12 @@ AskUserQuestion: Do you already have a Microsoft Graph API app registration (Cli
    - `ChannelMessage.Read.All`
    - `ChannelMessage.Send`
    - `User.Read`
-10. If you're a tenant admin, click **Grant admin consent**. If not, ask your admin to approve it.
+10. Click **Grant admin consent** (requires tenant admin — if you're not the admin, ask them to approve it)
+11. Share the Tenant ID and Client ID with others in your org who want to use NanoClaw
 
 AskUserQuestion: Please provide your Graph API credentials:
-- Tenant ID (Directory ID from the app overview page)
-- Client ID (Application ID from the app overview page)
+- Tenant ID
+- Client ID
 
 ### 3. Write Credentials to .env
 
@@ -58,7 +65,7 @@ M365_CLIENT_ID=<client-id>
 
 ### 4. Sign In via Device Code
 
-This step signs you in so NanoClaw can act as you. Run:
+This step signs you in so NanoClaw can act as you. Each user does this with their own account. Run:
 
 ```bash
 npx tsx -e "
