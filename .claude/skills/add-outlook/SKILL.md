@@ -79,12 +79,7 @@ M365_CLIENT_ID=<client-id>
 If not already signed in (from Teams setup), run:
 
 ```bash
-npx tsx -e "
-import { acquireTokenWithDeviceCode } from './src/m365-auth.js';
-const token = await acquireTokenWithDeviceCode();
-if (token) console.log('✓ Authentication successful');
-else { console.error('✗ Authentication failed'); process.exit(1); }
-"
+npx tsx src/m365-device-auth.ts
 ```
 
 You'll see a URL and a code — open the URL in your browser, enter the code, and sign in with your Microsoft 365 account. This is a one-time step; tokens are cached and auto-refresh.
@@ -148,13 +143,16 @@ You handle emails sent to {alias}. You are an email agent with access to the ema
 You are replying as {alias}. Maintain consistent tone and formatting.
 ```
 
-### 8. Build and Verify
+### 8. Build and Start the Orchestrator
+
+Build the project and the MyAssistantOrchestrator app (if not already installed from Teams setup). This is the shared service that runs Teams, Outlook, and any future integrations.
 
 ```bash
 npm run build
+bash app/build.sh && open app/build/MyAssistantOrchestrator.app
 ```
 
-Tell the user to restart NanoClaw and send a test email to one of their configured aliases.
+If the orchestrator is already running, click Restart in the app window to pick up the Outlook changes.
 
 Verify:
 1. Check `logs/nanoclaw.log` for "Starting Outlook email loop"

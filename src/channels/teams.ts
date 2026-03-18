@@ -144,7 +144,7 @@ class TeamsChannel implements Channel {
 
   private async listChats(): Promise<TeamsChat[]> {
     const result = await graphGet<{ value: TeamsChat[] }>(
-      '/me/chats?$top=50&$orderby=lastUpdatedDateTime desc',
+      '/me/chats?$top=50',
     );
     return result.value || [];
   }
@@ -190,11 +190,8 @@ class TeamsChannel implements Channel {
     const jid = toJid(chat.id);
     const since = this.lastPollTime[chat.id];
 
-    // Build query — fetch messages newer than our last poll
-    let url = `/me/chats/${chat.id}/messages?$top=50&$orderby=createdDateTime desc`;
-    if (since) {
-      url += `&$filter=createdDateTime gt ${since}`;
-    }
+    // Fetch recent messages (Graph API doesn't support $filter on createdDateTime for chat messages)
+    const url = `/me/chats/${chat.id}/messages?$top=20&$orderby=createdDateTime desc`;
 
     let messages: TeamsMessage[];
     try {
@@ -205,6 +202,11 @@ class TeamsChannel implements Channel {
       return;
     }
 
+    // Filter client-side to only process messages newer than last poll
+    if (since) {
+      messages = messages.filter((m) => m.createdDateTime > since);
+    }
+
     // Process in chronological order (oldest first)
     messages.reverse();
 
@@ -212,8 +214,12 @@ class TeamsChannel implements Channel {
       // Skip system messages
       if (msg.messageType !== 'message') continue;
 
-      // Skip our own messages
-      if (msg.from?.user?.id === this.selfUserId) continue;
+      // Skip our own messages — unless this is the main group (self-chat for commands)
+      const isFromMe = msg.from?.user?.id === this.selfUserId;
+      if (isFromMe) {
+        const group = this.opts.registeredGroups()[jid];
+        if (!group?.isMain) continue;
+      }
 
       const senderId = msg.from?.user?.id || msg.from?.application?.id || 'unknown';
       const senderName =
@@ -240,11 +246,10 @@ class TeamsChannel implements Channel {
         sender_name: senderName,
         content,
         timestamp: msg.createdDateTime,
-        is_from_me: false,
+        is_from_me: isFromMe,
         is_bot_message: false,
       };
 
-      this.opts.onMessage(jid, newMsg);
       this.opts.onChatMetadata(
         jid,
         msg.createdDateTime,
@@ -252,6 +257,7 @@ class TeamsChannel implements Channel {
         'teams',
         chat.chatType !== 'oneOnOne',
       );
+      this.opts.onMessage(jid, newMsg);
     }
 
     // Update poll cursor

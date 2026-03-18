@@ -68,12 +68,7 @@ M365_CLIENT_ID=<client-id>
 This step signs you in so NanoClaw can act as you. Each user does this with their own account. Run:
 
 ```bash
-npx tsx -e "
-import { acquireTokenWithDeviceCode } from './src/m365-auth.js';
-const token = await acquireTokenWithDeviceCode();
-if (token) console.log('✓ Authentication successful');
-else { console.error('✗ Authentication failed'); process.exit(1); }
-"
+npx tsx src/m365-device-auth.ts
 ```
 
 You'll see a URL and a code — open the URL in your browser, enter the code, and sign in with your Microsoft 365 account. This is a one-time step; tokens are cached and auto-refresh.
@@ -92,32 +87,30 @@ M365_TEAMS_POLL_INTERVAL=15000
 
 ### 6. Register Main Teams Chat
 
-AskUserQuestion: Which Teams chat should be the main channel? (This is where admin commands and notifications go)
+Automatically create (or find) a private "MyAssistant" group chat for the user. This is a private chat with only the user in it, used as the main control channel. Run:
 
-Help the user identify the chat ID. Run:
 ```bash
-npx tsx -e "
-import { graphGet } from './src/m365-auth.js';
-const result = await graphGet('/me/chats?\$top=20&\$orderby=lastUpdatedDateTime desc');
-for (const chat of result.value) {
-  console.log(\`\${chat.chatType}: \${chat.topic || '(no topic)'} — ID: \${chat.id}\`);
-}
-"
+npx tsx src/m365-ensure-main-chat.ts
 ```
 
-Register the chosen chat as the main group using the standard NanoClaw group registration.
+The script prints the chat ID. Register it as the main group with JID `teams:{chatId}`, folder `teams_main`, and `isMain: true`, `requiresTrigger: false`.
 
 ### 7. Create Group CLAUDE.md
 
 Create `groups/{folder}/CLAUDE.md` with default Teams agent instructions. Follow the pattern from `groups/main/CLAUDE.md` but adapt for Teams formatting (Teams supports markdown).
 
-### 8. Build and Verify
+### 8. Build and Start the Orchestrator
+
+Build the project and the MyAssistantOrchestrator app. This is the shared service that runs Teams, Outlook, and any future integrations.
 
 ```bash
 npm run build
+bash app/build.sh && open app/build/MyAssistantOrchestrator.app
 ```
 
-Tell the user to restart NanoClaw and send a test message in their Teams chat.
+The orchestrator appears as an app in the Dock with a claw icon. It shows service status and has Start/Stop/Restart buttons. No further setup needed — the service is now running.
+
+Tell the user to check the Dock for the MyAssistant Orchestrator app and send a test message in their "MyAssistant" Teams chat.
 
 ## Troubleshooting
 
