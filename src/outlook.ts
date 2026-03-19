@@ -288,7 +288,12 @@ export async function sendOutlookEmail(params: {
     });
 
     logger.info(
-      { from: params.fromAlias, to: params.to, subject: params.subject, replyTo: params.inReplyTo },
+      {
+        from: params.fromAlias,
+        to: params.to,
+        subject: params.subject,
+        replyTo: params.inReplyTo,
+      },
       'Sent Outlook reply (with thread history)',
     );
     return;
@@ -550,6 +555,9 @@ export async function startOutlookLoop(opts: OutlookLoopOpts): Promise<void> {
 
       for (const msg of backfillMessages) {
         processedIds.add(msg.id); // Prevent pollInbox from re-triggering agent
+
+        // Skip messages without a sender (drafts, system messages, etc.)
+        if (!msg.from?.emailAddress) continue;
 
         const aliasMatch = classifyByAlias(msg, aliases);
         if (!aliasMatch && mode === 'alias') continue;
