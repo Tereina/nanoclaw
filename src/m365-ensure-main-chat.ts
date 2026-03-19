@@ -51,15 +51,10 @@ if (existing) {
 // Look up the companion user's ID
 let companionId: string;
 try {
-  const companion = await graphGet<GraphUser>(
-    `/users/${COMPANION_EMAIL}`,
-  );
+  const companion = await graphGet<GraphUser>(`/users/${COMPANION_EMAIL}`);
   companionId = companion.id;
 } catch (err) {
-  console.error(
-    `Failed to look up companion user ${COMPANION_EMAIL}:`,
-    err,
-  );
+  console.error(`Failed to look up companion user ${COMPANION_EMAIL}:`, err);
   process.exit(1);
 }
 
