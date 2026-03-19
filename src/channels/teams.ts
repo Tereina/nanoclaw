@@ -66,6 +66,12 @@ interface TeamsChat {
   lastUpdatedDateTime: string;
 }
 
+interface DeltaResponse {
+  value: TeamsMessage[];
+  '@odata.nextLink'?: string;
+  '@odata.deltaLink'?: string;
+}
+
 function toJid(chatId: string): string {
   return `${JID_PREFIX}${chatId}`;
 }
@@ -91,21 +97,21 @@ function stripHtml(html: string): string {
 class TeamsChannel implements Channel {
   name = 'teams';
   private opts: ChannelOpts;
-  private pollInterval: ReturnType<typeof setInterval> | null = null;
+  private mainPollInterval: ReturnType<typeof setInterval> | null = null;
+  private slowPollInterval: ReturnType<typeof setInterval> | null = null;
   private connected = false;
   private selfUserId: string | null = null;
-  private lastPollTime: Record<string, string> = {};
+  private deltaLinks: Record<string, string> = {}; // chatId -> deltaLink URL
   private userNameCache = new Map<string, string>();
   private mode: 'discover' | 'registered';
-  private pollMs: number;
   private assistantName: string;
+  private mainChatId: string | null = null;
 
   constructor(opts: ChannelOpts) {
     this.opts = opts;
-    const env = readEnvFile(['M365_TEAMS_MODE', 'M365_TEAMS_POLL_INTERVAL']);
+    const env = readEnvFile(['M365_TEAMS_MODE']);
     this.mode =
       env.M365_TEAMS_MODE === 'registered' ? 'registered' : 'discover';
-    this.pollMs = parseInt(env.M365_TEAMS_POLL_INTERVAL || '15000', 10);
     this.assistantName = ASSISTANT_NAME;
   }
 
@@ -120,13 +126,31 @@ class TeamsChannel implements Channel {
       );
       this.connected = true;
 
-      // Start polling
-      this.pollInterval = setInterval(() => {
-        this.poll().catch((err) => logger.error({ err }, 'Teams poll error'));
-      }, this.pollMs);
+      // Identify the main chat
+      const groups = this.opts.registeredGroups();
+      for (const [jid, group] of Object.entries(groups)) {
+        if (jid.startsWith(JID_PREFIX) && group.isMain) {
+          this.mainChatId = fromJid(jid);
+          break;
+        }
+      }
 
-      // Initial poll
-      await this.poll();
+      // Prime delta tokens for all known chats
+      await this.primeAllDeltas();
+
+      // Fast poll: main chat only (5s)
+      this.mainPollInterval = setInterval(() => {
+        this.pollMain().catch((err) =>
+          logger.error({ err }, 'Teams main poll error'),
+        );
+      }, 5000);
+
+      // Slow poll: chat discovery + all other chats (30s)
+      this.slowPollInterval = setInterval(() => {
+        this.pollOthers().catch((err) =>
+          logger.error({ err }, 'Teams slow poll error'),
+        );
+      }, 30000);
     } catch (err) {
       logger.error({ err }, 'Teams channel failed to connect');
       throw err;
@@ -151,9 +175,13 @@ class TeamsChannel implements Channel {
   }
 
   async disconnect(): Promise<void> {
-    if (this.pollInterval) {
-      clearInterval(this.pollInterval);
-      this.pollInterval = null;
+    if (this.mainPollInterval) {
+      clearInterval(this.mainPollInterval);
+      this.mainPollInterval = null;
+    }
+    if (this.slowPollInterval) {
+      clearInterval(this.slowPollInterval);
+      this.slowPollInterval = null;
     }
     this.connected = false;
     logger.info('Teams channel disconnected');
@@ -184,14 +212,80 @@ class TeamsChannel implements Channel {
     return result.value || [];
   }
 
-  private async poll(): Promise<void> {
+  /** Prime delta tokens for all known chats without processing messages */
+  private async primeAllDeltas(): Promise<void> {
+    try {
+      let chatIds: string[];
+
+      if (this.mode === 'registered') {
+        const groups = this.opts.registeredGroups();
+        chatIds = Object.keys(groups)
+          .filter((jid) => jid.startsWith(JID_PREFIX))
+          .map((jid) => fromJid(jid));
+      } else {
+        const chats = await this.listChats();
+        chatIds = chats.map((c) => c.id);
+      }
+
+      for (const chatId of chatIds) {
+        await this.primeDelta(chatId);
+      }
+
+      logger.info(
+        { chatCount: chatIds.length },
+        'Delta sync initialized for all chats',
+      );
+    } catch (err) {
+      logger.error({ err }, 'Failed to prime delta tokens');
+    }
+  }
+
+  /** Fetch all delta pages for a chat to get the initial delta token (skip processing) */
+  private async primeDelta(chatId: string): Promise<void> {
+    try {
+      let url: string | null =
+        `/me/chats/${chatId}/messages/delta`;
+      while (url) {
+        const result: DeltaResponse = await graphGet(url);
+
+        if (result['@odata.deltaLink']) {
+          this.deltaLinks[chatId] = result['@odata.deltaLink'];
+          url = null;
+        } else if (result['@odata.nextLink']) {
+          url = result['@odata.nextLink'];
+        } else {
+          url = null;
+        }
+      }
+      logger.debug({ chatId }, 'Delta token primed');
+    } catch (err: unknown) {
+      const status = (err as { statusCode?: number }).statusCode;
+      if (status === 403) {
+        logger.debug({ chatId }, 'Skipping delta prime (not a member)');
+      } else {
+        logger.warn({ chatId, err }, 'Failed to prime delta token');
+      }
+    }
+  }
+
+  /** Poll main chat only — runs every 5s */
+  private async pollMain(): Promise<void> {
+    if (!this.connected || !this.mainChatId) return;
+    try {
+      await this.pollChatDelta(this.mainChatId);
+    } catch (err) {
+      logger.error({ err }, 'Teams main poll error');
+    }
+  }
+
+  /** Chat discovery + poll all non-main chats — runs every 30s */
+  private async pollOthers(): Promise<void> {
     if (!this.connected) return;
 
     try {
       let chats: TeamsChat[];
 
       if (this.mode === 'registered') {
-        // Only poll chats that are registered as NanoClaw groups
         const groups = this.opts.registeredGroups();
         const registeredChatIds = Object.keys(groups)
           .filter((jid) => jid.startsWith(JID_PREFIX))
@@ -199,7 +293,6 @@ class TeamsChannel implements Channel {
 
         if (registeredChatIds.length === 0) return;
 
-        // Fetch each registered chat individually
         chats = [];
         for (const chatId of registeredChatIds) {
           try {
@@ -216,45 +309,81 @@ class TeamsChannel implements Channel {
         chats = await this.listChats();
       }
 
+      // Sync metadata for all chats
       for (const chat of chats) {
-        await this.pollChat(chat);
+        this.opts.onChatMetadata(
+          toJid(chat.id),
+          chat.lastUpdatedDateTime,
+          chat.topic || `Teams ${chat.chatType} chat`,
+          'teams',
+          chat.chatType !== 'oneOnOne',
+        );
+      }
+
+      // Poll non-main chats with throttling
+      for (const chat of chats) {
+        if (chat.id === this.mainChatId) continue;
+
+        // Prime new chats on first encounter
+        if (!this.deltaLinks[chat.id]) {
+          await this.primeDelta(chat.id);
+          continue; // Skip processing on prime cycle
+        }
+
+        await this.pollChatDelta(chat.id);
+
+        // 100ms delay between chats to avoid rate limiting
+        await new Promise((resolve) => setTimeout(resolve, 100));
       }
     } catch (err) {
-      logger.error({ err }, 'Teams poll cycle error');
+      logger.error({ err }, 'Teams slow poll cycle error');
     }
   }
 
-  private async pollChat(chat: TeamsChat): Promise<void> {
-    const jid = toJid(chat.id);
-    const since = this.lastPollTime[chat.id];
+  /** Poll a single chat using its delta token */
+  private async pollChatDelta(chatId: string): Promise<void> {
+    const deltaLink = this.deltaLinks[chatId];
+    if (!deltaLink) return; // Not yet primed
 
-    // Fetch recent messages (Graph API doesn't support $filter on createdDateTime for chat messages)
-    const url = `/me/chats/${chat.id}/messages?$top=20&$orderby=createdDateTime desc`;
+    const jid = toJid(chatId);
+    let allMessages: TeamsMessage[] = [];
 
-    let messages: TeamsMessage[];
     try {
-      const result = await graphGet<{ value: TeamsMessage[] }>(url);
-      messages = result.value || [];
+      let url: string | null = deltaLink;
+      while (url) {
+        const result: DeltaResponse = await graphGet(url);
+
+        if (result.value) {
+          allMessages = allMessages.concat(result.value);
+        }
+
+        if (result['@odata.deltaLink']) {
+          this.deltaLinks[chatId] = result['@odata.deltaLink'];
+          url = null;
+        } else if (result['@odata.nextLink']) {
+          url = result['@odata.nextLink'];
+        } else {
+          url = null;
+        }
+      }
     } catch (err: unknown) {
       const status = (err as { statusCode?: number }).statusCode;
-      if (status === 403) {
-        logger.debug({ chatId: chat.id }, 'Skipping Teams chat (not a member)');
-      } else {
-        logger.warn({ chatId: chat.id, err }, 'Failed to fetch Teams messages');
+      if (status === 404 || status === 410) {
+        // Delta token expired — re-prime on next cycle
+        logger.info({ chatId }, 'Delta token expired, will re-prime');
+        delete this.deltaLinks[chatId];
+        return;
       }
+      if (status === 403) {
+        logger.debug({ chatId }, 'Skipping Teams chat (not a member)');
+        return;
+      }
+      logger.warn({ chatId, err }, 'Failed to fetch Teams delta messages');
       return;
     }
 
-    // Filter client-side to only process messages newer than last poll
-    if (since) {
-      messages = messages.filter((m) => m.createdDateTime > since);
-    }
-
-    // Process in chronological order (oldest first)
-    messages.reverse();
-
-    for (const msg of messages) {
-      // Skip system messages
+    // Process messages (already only new ones thanks to delta)
+    for (const msg of allMessages) {
       if (msg.messageType !== 'message') continue;
 
       const isFromMe = msg.from?.user?.id === this.selfUserId;
@@ -266,7 +395,6 @@ class TeamsChannel implements Channel {
         msg.from?.application?.displayName ||
         'Unknown';
 
-      // Cache sender name
       if (msg.from?.user?.id) {
         this.userNameCache.set(msg.from.user.id, senderName);
       }
@@ -289,25 +417,7 @@ class TeamsChannel implements Channel {
         is_bot_message: false,
       };
 
-      this.opts.onChatMetadata(
-        jid,
-        msg.createdDateTime,
-        chat.topic || `Teams ${chat.chatType} chat`,
-        'teams',
-        chat.chatType !== 'oneOnOne',
-      );
       this.opts.onMessage(jid, newMsg);
-    }
-
-    // Update poll cursor
-    if (messages.length > 0) {
-      const latest = messages[messages.length - 1].createdDateTime;
-      if (!since || latest > since) {
-        this.lastPollTime[chat.id] = latest;
-      }
-    } else if (!since) {
-      // First poll with no messages — set cursor to now
-      this.lastPollTime[chat.id] = new Date().toISOString();
     }
   }
 }
