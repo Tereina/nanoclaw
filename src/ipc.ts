@@ -87,7 +87,12 @@ export function startIpcWatcher(deps: IpcDeps): void {
                 data.subject &&
                 data.body
               ) {
-                try {
+                if (!isMain) {
+                  logger.warn(
+                    { sourceGroup },
+                    'Unauthorized draft_outlook_email attempt blocked (main only)',
+                  );
+                } else try {
                   const draftId = await draftOutlookEmail({
                     fromAlias: data.fromAlias,
                     to: data.to,
@@ -108,6 +113,15 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   );
                 }
               } else if (data.type === 'archive_email' && data.requestId) {
+                if (!isMain) {
+                  logger.warn({ sourceGroup }, 'Unauthorized archive_email attempt blocked (main only)');
+                  const responsesDir = path.join(ipcBaseDir, sourceGroup, 'responses');
+                  fs.mkdirSync(responsesDir, { recursive: true });
+                  fs.writeFileSync(
+                    path.join(responsesDir, `${data.requestId}.json`),
+                    JSON.stringify({ requestId: data.requestId, error: 'Only the main group can archive emails' }),
+                  );
+                } else
                 // Archive email by moving to Archive folder
                 try {
                   const { graphPost } = await import('./m365-auth.js');
@@ -227,10 +241,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     }),
                   );
                 }
-              } else if (
-                data.type === 'search_calendar' &&
-                data.requestId
-              ) {
+              } else if (data.type === 'search_calendar' && data.requestId) {
                 try {
                   const results = await searchCalendarEvents({
                     after: data.after,
@@ -253,14 +264,22 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   fs.writeFileSync(
                     tempFile,
                     JSON.stringify(
-                      { requestId: data.requestId, results, totalCount: results.length },
+                      {
+                        requestId: data.requestId,
+                        results,
+                        totalCount: results.length,
+                      },
                       null,
                       2,
                     ),
                   );
                   fs.renameSync(tempFile, responseFile);
                   logger.info(
-                    { sourceGroup, requestId: data.requestId, resultCount: results.length },
+                    {
+                      sourceGroup,
+                      requestId: data.requestId,
+                      resultCount: results.length,
+                    },
                     'IPC calendar search completed',
                   );
                 } catch (err) {
@@ -268,18 +287,35 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     { sourceGroup, requestId: data.requestId, err },
                     'IPC calendar search failed',
                   );
-                  const responsesDir = path.join(ipcBaseDir, sourceGroup, 'responses');
+                  const responsesDir = path.join(
+                    ipcBaseDir,
+                    sourceGroup,
+                    'responses',
+                  );
                   fs.mkdirSync(responsesDir, { recursive: true });
                   fs.writeFileSync(
                     path.join(responsesDir, `${data.requestId}.json`),
-                    JSON.stringify({ requestId: data.requestId, results: [], totalCount: 0, error: err instanceof Error ? err.message : String(err) }),
+                    JSON.stringify({
+                      requestId: data.requestId,
+                      results: [],
+                      totalCount: 0,
+                      error: err instanceof Error ? err.message : String(err),
+                    }),
                   );
                 }
               } else if (
                 data.type === 'create_calendar_event' &&
                 data.requestId
               ) {
-                try {
+                if (!isMain) {
+                  logger.warn({ sourceGroup }, 'Unauthorized create_calendar_event attempt blocked (main only)');
+                  const responsesDir = path.join(ipcBaseDir, sourceGroup, 'responses');
+                  fs.mkdirSync(responsesDir, { recursive: true });
+                  fs.writeFileSync(
+                    path.join(responsesDir, `${data.requestId}.json`),
+                    JSON.stringify({ requestId: data.requestId, error: 'Only the main group can create calendar events' }),
+                  );
+                } else try {
                   const result = await createCalendarEvent({
                     subject: data.subject,
                     start: data.start,
@@ -287,17 +323,38 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     attendees: data.attendees,
                     body: data.body,
                     location: data.location,
-                    isTeamsMeeting: data.isTeamsMeeting === true || data.isTeamsMeeting === 'true',
-                    isAllDay: data.isAllDay === true || data.isAllDay === 'true',
+                    isTeamsMeeting:
+                      data.isTeamsMeeting === true ||
+                      data.isTeamsMeeting === 'true',
+                    isAllDay:
+                      data.isAllDay === true || data.isAllDay === 'true',
                   });
-                  const responsesDir = path.join(ipcBaseDir, sourceGroup, 'responses');
+                  const responsesDir = path.join(
+                    ipcBaseDir,
+                    sourceGroup,
+                    'responses',
+                  );
                   fs.mkdirSync(responsesDir, { recursive: true });
-                  const responseFile = path.join(responsesDir, `${data.requestId}.json`);
+                  const responseFile = path.join(
+                    responsesDir,
+                    `${data.requestId}.json`,
+                  );
                   const tempFile = `${responseFile}.tmp`;
-                  fs.writeFileSync(tempFile, JSON.stringify({ requestId: data.requestId, result }, null, 2));
+                  fs.writeFileSync(
+                    tempFile,
+                    JSON.stringify(
+                      { requestId: data.requestId, result },
+                      null,
+                      2,
+                    ),
+                  );
                   fs.renameSync(tempFile, responseFile);
                   logger.info(
-                    { sourceGroup, requestId: data.requestId, eventId: result.id },
+                    {
+                      sourceGroup,
+                      requestId: data.requestId,
+                      eventId: result.id,
+                    },
                     'IPC calendar event created',
                   );
                 } catch (err) {
@@ -305,18 +362,33 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     { sourceGroup, requestId: data.requestId, err },
                     'IPC calendar event creation failed',
                   );
-                  const responsesDir = path.join(ipcBaseDir, sourceGroup, 'responses');
+                  const responsesDir = path.join(
+                    ipcBaseDir,
+                    sourceGroup,
+                    'responses',
+                  );
                   fs.mkdirSync(responsesDir, { recursive: true });
                   fs.writeFileSync(
                     path.join(responsesDir, `${data.requestId}.json`),
-                    JSON.stringify({ requestId: data.requestId, error: err instanceof Error ? err.message : String(err) }),
+                    JSON.stringify({
+                      requestId: data.requestId,
+                      error: err instanceof Error ? err.message : String(err),
+                    }),
                   );
                 }
               } else if (
                 data.type === 'update_calendar_event' &&
                 data.requestId
               ) {
-                try {
+                if (!isMain) {
+                  logger.warn({ sourceGroup }, 'Unauthorized update_calendar_event attempt blocked (main only)');
+                  const responsesDir = path.join(ipcBaseDir, sourceGroup, 'responses');
+                  fs.mkdirSync(responsesDir, { recursive: true });
+                  fs.writeFileSync(
+                    path.join(responsesDir, `${data.requestId}.json`),
+                    JSON.stringify({ requestId: data.requestId, error: 'Only the main group can update calendar events' }),
+                  );
+                } else try {
                   const result = await updateCalendarEvent({
                     eventId: data.eventId,
                     subject: data.subject,
@@ -325,16 +397,41 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     attendees: data.attendees,
                     body: data.body,
                     location: data.location,
-                    isTeamsMeeting: data.isTeamsMeeting === true || data.isTeamsMeeting === 'true' ? true : data.isTeamsMeeting === false || data.isTeamsMeeting === 'false' ? false : undefined,
+                    isTeamsMeeting:
+                      data.isTeamsMeeting === true ||
+                      data.isTeamsMeeting === 'true'
+                        ? true
+                        : data.isTeamsMeeting === false ||
+                            data.isTeamsMeeting === 'false'
+                          ? false
+                          : undefined,
                   });
-                  const responsesDir = path.join(ipcBaseDir, sourceGroup, 'responses');
+                  const responsesDir = path.join(
+                    ipcBaseDir,
+                    sourceGroup,
+                    'responses',
+                  );
                   fs.mkdirSync(responsesDir, { recursive: true });
-                  const responseFile = path.join(responsesDir, `${data.requestId}.json`);
+                  const responseFile = path.join(
+                    responsesDir,
+                    `${data.requestId}.json`,
+                  );
                   const tempFile = `${responseFile}.tmp`;
-                  fs.writeFileSync(tempFile, JSON.stringify({ requestId: data.requestId, result }, null, 2));
+                  fs.writeFileSync(
+                    tempFile,
+                    JSON.stringify(
+                      { requestId: data.requestId, result },
+                      null,
+                      2,
+                    ),
+                  );
                   fs.renameSync(tempFile, responseFile);
                   logger.info(
-                    { sourceGroup, requestId: data.requestId, eventId: data.eventId },
+                    {
+                      sourceGroup,
+                      requestId: data.requestId,
+                      eventId: data.eventId,
+                    },
                     'IPC calendar event updated',
                   );
                 } catch (err) {
@@ -342,11 +439,18 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     { sourceGroup, requestId: data.requestId, err },
                     'IPC calendar event update failed',
                   );
-                  const responsesDir = path.join(ipcBaseDir, sourceGroup, 'responses');
+                  const responsesDir = path.join(
+                    ipcBaseDir,
+                    sourceGroup,
+                    'responses',
+                  );
                   fs.mkdirSync(responsesDir, { recursive: true });
                   fs.writeFileSync(
                     path.join(responsesDir, `${data.requestId}.json`),
-                    JSON.stringify({ requestId: data.requestId, error: err instanceof Error ? err.message : String(err) }),
+                    JSON.stringify({
+                      requestId: data.requestId,
+                      error: err instanceof Error ? err.message : String(err),
+                    }),
                   );
                 }
               } else if (data.type === 'message' && data.chatJid && data.text) {

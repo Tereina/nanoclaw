@@ -216,7 +216,9 @@ function classifyByAlias(
   if (msg.internetMessageHeaders) {
     const rawTo =
       msg.internetMessageHeaders
-        .filter((h) => h.name.toLowerCase() === 'to' || h.name.toLowerCase() === 'cc')
+        .filter(
+          (h) => h.name.toLowerCase() === 'to' || h.name.toLowerCase() === 'cc',
+        )
         .map((h) => h.value.toLowerCase())
         .join(' ') || '';
 
@@ -673,7 +675,10 @@ export async function startOutlookLoop(opts: OutlookLoopOpts): Promise<void> {
 
       if (messages.length > 0) {
         logger.info(
-          { unreadCount: messages.length, newCount: messages.filter((m) => !processedIds.has(m.id)).length },
+          {
+            unreadCount: messages.length,
+            newCount: messages.filter((m) => !processedIds.has(m.id)).length,
+          },
           'Outlook poll: found unread emails',
         );
       }
@@ -767,45 +772,18 @@ export async function startOutlookLoop(opts: OutlookLoopOpts): Promise<void> {
         );
         opts.storeMessage(storedMsg);
 
-        // Run agent with fresh session
-        try {
-          const agentResult = await opts.runEmailAgent(
-            targetFolder,
-            chatJid,
-            prompt,
-          );
+        // Store only — no automatic agent runs.
+        // All actions (drafting replies, etc.) must be explicitly requested
+        // from the main Teams channel.
+        processedIds.add(msg.id);
+        await markAsRead(msg.id);
 
-          // Forward output to main channel — only for focused inbox emails from real people
-          const isFocused = msg.inferenceClassification !== 'other';
-          const isRealPerson = !isLikelyAutomated(
-            msg.from.emailAddress.address,
-          );
-          if (agentResult && isFocused && isRealPerson) {
-            const summary = `[Outlook → ${targetAlias}] ${msg.subject}\n${agentResult}`;
-            await opts.sendToMainChannel(summary);
+        if (aliasMatch) {
+          const folderName = `NanoClaw - ${aliasMatch.groupFolder}`;
+          const folderId = folderIdCache.get(folderName);
+          if (folderId) {
+            await moveToFolder(msg.id, folderId);
           }
-
-          // Mark processed + read + move to subfolder
-          processedIds.add(msg.id);
-          await markAsRead(msg.id);
-
-          if (aliasMatch) {
-            const folderName = `NanoClaw - ${aliasMatch.groupFolder}`;
-            const folderId = folderIdCache.get(folderName);
-            if (folderId) {
-              await moveToFolder(msg.id, folderId);
-            }
-          }
-        } catch (err) {
-          logger.error(
-            {
-              messageId: msg.id,
-              subject: msg.subject,
-              err,
-            },
-            'Failed to process email — leaving unread for retry',
-          );
-          // Don't mark as processed — will retry next cycle
         }
       }
     } catch (err) {
