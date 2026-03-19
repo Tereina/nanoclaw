@@ -24,6 +24,7 @@ interface OutlookMessage {
   receivedDateTime: string;
   isRead: boolean;
   parentFolderId: string;
+  inferenceClassification?: 'focused' | 'other';
 }
 
 interface MailFolder {
@@ -162,6 +163,33 @@ async function markAsRead(messageId: string): Promise<void> {
   } catch (err) {
     logger.warn({ messageId, err }, 'Failed to mark email as read');
   }
+}
+
+// --- Sender classification ---
+
+const AUTOMATED_SENDER_PATTERNS = [
+  /^no-?reply@/i,
+  /^noreply@/i,
+  /^do-?not-?reply@/i,
+  /^mailer-daemon@/i,
+  /^postmaster@/i,
+  /^notifications?@/i,
+  /^alert[s]?@/i,
+  /^newsletter@/i,
+  /^marketing@/i,
+  /^info@/i,
+  /^support@.*\.com$/i,
+  /^hello@.*\.com$/i,
+  /^team@/i,
+  /^updates?@/i,
+  /^digest@/i,
+  /^bounce[s]?@/i,
+  /^feedback@/i,
+  /^automated@/i,
+];
+
+function isLikelyAutomated(senderAddress: string): boolean {
+  return AUTOMATED_SENDER_PATTERNS.some((p) => p.test(senderAddress));
 }
 
 // --- Email classification ---
@@ -619,7 +647,7 @@ export async function startOutlookLoop(opts: OutlookLoopOpts): Promise<void> {
   async function pollInbox(): Promise<void> {
     try {
       const result = await graphGet<{ value: OutlookMessage[] }>(
-        '/me/mailFolders/inbox/messages?$filter=isRead eq false&$top=50&$orderby=receivedDateTime asc&$select=id,conversationId,internetMessageId,subject,bodyPreview,body,from,toRecipients,ccRecipients,receivedDateTime,isRead,parentFolderId',
+        '/me/mailFolders/inbox/messages?$filter=isRead eq false&$top=50&$orderby=receivedDateTime asc&$select=id,conversationId,internetMessageId,subject,bodyPreview,body,from,toRecipients,ccRecipients,receivedDateTime,isRead,parentFolderId,inferenceClassification',
       );
 
       const messages = result.value || [];
@@ -710,8 +738,12 @@ export async function startOutlookLoop(opts: OutlookLoopOpts): Promise<void> {
             prompt,
           );
 
-          // Forward output to main channel
-          if (agentResult) {
+          // Forward output to main channel — only for focused inbox emails from real people
+          const isFocused = msg.inferenceClassification !== 'other';
+          const isRealPerson = !isLikelyAutomated(
+            msg.from.emailAddress.address,
+          );
+          if (agentResult && isFocused && isRealPerson) {
             const summary = `[Outlook → ${targetAlias}] ${msg.subject}\n${agentResult}`;
             await opts.sendToMainChannel(summary);
           }
