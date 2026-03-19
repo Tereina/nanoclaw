@@ -87,7 +87,7 @@ M365_TEAMS_POLL_INTERVAL=15000
 
 ### 6. Register Main Teams Chat
 
-Automatically create (or find) a private "MyAssistant" group chat for the user. This is a private chat with only the user in it, used as the main control channel. Run:
+Automatically create (or find) a private assistant group chat for the user. The chat name is derived from the user's email — e.g. `cedric.bru@tereina.com` becomes `CedricBruAssistant`. The companion user `teri.reina@tereina.com` is automatically added so the Teams mobile app allows sending messages. Run:
 
 ```bash
 npx tsx src/m365-ensure-main-chat.ts
@@ -95,11 +95,25 @@ npx tsx src/m365-ensure-main-chat.ts
 
 The script prints the chat ID. Register it as the main group with JID `teams:{chatId}`, folder `teams_main`, and `isMain: true`, `requiresTrigger: false`.
 
-### 7. Create Group CLAUDE.md
+### 7. Register Installed Tools (if applicable)
 
-Create `groups/{folder}/CLAUDE.md` with default Teams agent instructions. Follow the pattern from `groups/main/CLAUDE.md` but adapt for Teams formatting (Teams supports markdown).
+If Teams adds MCP tools beyond the core set (send_message, schedule_task, etc.), create `groups/global/installed-tools/teams.md` with tool documentation. If no Teams-specific tools are added, skip this step.
 
-### 8. Build and Start the Orchestrator
+This directory is NOT tracked in git — it's local to each install. Agents discover available tools by reading files in `/workspace/global/installed-tools/`.
+
+### 8. Create Group CLAUDE.md
+
+Create `groups/{folder}/CLAUDE.md` with Teams agent instructions. Follow the pattern from `groups/main/CLAUDE.md` but adapt for Teams formatting (Teams supports markdown). Include a pointer for tool discovery:
+
+```markdown
+## Available Tools
+
+Check `/workspace/global/installed-tools/` for all available MCP tools — read files there to see what's installed.
+```
+
+Do NOT duplicate tool documentation in the per-group file.
+
+### 9. Build and Start the Orchestrator
 
 Build the project and the MyAssistantOrchestrator app. This is the shared service that runs Teams, Outlook, and any future integrations.
 
@@ -110,7 +124,7 @@ bash app/build.sh && open app/build/MyAssistantOrchestrator.app
 
 The orchestrator appears as an app in the Dock with a claw icon. It shows service status and has Start/Stop/Restart buttons. No further setup needed — the service is now running.
 
-Tell the user to check the Dock for the MyAssistant Orchestrator app and send a test message in their "MyAssistant" Teams chat.
+Tell the user to check the Dock for the MyAssistant Orchestrator app and send a test message in their assistant Teams chat (named after their email, e.g. "CedricBruAssistant").
 
 ## Troubleshooting
 

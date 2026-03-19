@@ -1,3 +1,4 @@
+import { ASSISTANT_NAME } from '../config.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
 import { hasM365Credentials, graphGet, graphPost } from '../m365-auth.js';
@@ -6,6 +7,40 @@ import { Channel, NewMessage } from '../types.js';
 import { ChannelOpts, registerChannel } from './registry.js';
 
 const JID_PREFIX = 'teams:';
+
+/** Convert simple markdown to Teams-compatible HTML */
+function markdownToTeamsHtml(md: string): string {
+  let html = md
+    // Escape HTML entities first
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    // Code blocks (``` ... ```) — must come before inline code
+    .replace(/```([\s\S]*?)```/g, '<pre>$1</pre>')
+    // Inline code
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    // Bold (**text** or __text__)
+    .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+    .replace(/__(.+?)__/g, '<b>$1</b>')
+    // Italic (*text* or _text_) — careful not to match inside bold
+    .replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<i>$1</i>')
+    .replace(/(?<!_)_([^_]+)_(?!_)/g, '<i>$1</i>')
+    // Bullet lists (- item or • item)
+    .replace(/^[\-•]\s+(.+)$/gm, '<li>$1</li>')
+    // Newlines to <br>
+    .replace(/\n/g, '<br>');
+
+  // Wrap consecutive <li> in <ul>
+  html = html.replace(/((?:<li>.*?<\/li>(?:<br>)?)+)/g, (match) => {
+    const cleaned = match.replace(/<br>/g, '');
+    return `<ul>${cleaned}</ul>`;
+  });
+
+  // Remove --- horizontal rules (Teams doesn't render them)
+  html = html.replace(/(?:<br>)?-{3,}(?:<br>)?/g, '<br>');
+
+  return html;
+}
 
 interface TeamsMessage {
   id: string;
@@ -63,12 +98,15 @@ class TeamsChannel implements Channel {
   private userNameCache = new Map<string, string>();
   private mode: 'discover' | 'registered';
   private pollMs: number;
+  private assistantName: string;
 
   constructor(opts: ChannelOpts) {
     this.opts = opts;
     const env = readEnvFile(['M365_TEAMS_MODE', 'M365_TEAMS_POLL_INTERVAL']);
-    this.mode = env.M365_TEAMS_MODE === 'registered' ? 'registered' : 'discover';
+    this.mode =
+      env.M365_TEAMS_MODE === 'registered' ? 'registered' : 'discover';
     this.pollMs = parseInt(env.M365_TEAMS_POLL_INTERVAL || '15000', 10);
+    this.assistantName = ASSISTANT_NAME;
   }
 
   async connect(): Promise<void> {
@@ -84,9 +122,7 @@ class TeamsChannel implements Channel {
 
       // Start polling
       this.pollInterval = setInterval(() => {
-        this.poll().catch((err) =>
-          logger.error({ err }, 'Teams poll error'),
-        );
+        this.poll().catch((err) => logger.error({ err }, 'Teams poll error'));
       }, this.pollMs);
 
       // Initial poll
@@ -99,8 +135,10 @@ class TeamsChannel implements Channel {
 
   async sendMessage(jid: string, text: string): Promise<void> {
     const chatId = fromJid(jid);
+    const html = markdownToTeamsHtml(text);
+    const prefixed = `🤖 <b>${this.assistantName}:</b> ${html}`;
     await graphPost(`/me/chats/${chatId}/messages`, {
-      body: { contentType: 'text', content: text },
+      body: { contentType: 'html', content: prefixed },
     });
   }
 
@@ -126,8 +164,7 @@ class TeamsChannel implements Channel {
       const chats = await this.listChats();
       for (const chat of chats) {
         const jid = toJid(chat.id);
-        const name =
-          chat.topic || `Teams ${chat.chatType} chat`;
+        const name = chat.topic || `Teams ${chat.chatType} chat`;
         const isGroup = chat.chatType !== 'oneOnOne';
         this.opts.onChatMetadata(
           jid,
@@ -143,9 +180,7 @@ class TeamsChannel implements Channel {
   }
 
   private async listChats(): Promise<TeamsChat[]> {
-    const result = await graphGet<{ value: TeamsChat[] }>(
-      '/me/chats?$top=50',
-    );
+    const result = await graphGet<{ value: TeamsChat[] }>('/me/chats?$top=50');
     return result.value || [];
   }
 
@@ -171,7 +206,10 @@ class TeamsChannel implements Channel {
             const chat = await graphGet<TeamsChat>(`/me/chats/${chatId}`);
             chats.push(chat);
           } catch (err) {
-            logger.warn({ chatId, err }, 'Failed to fetch registered Teams chat');
+            logger.warn(
+              { chatId, err },
+              'Failed to fetch registered Teams chat',
+            );
           }
         }
       } else {
@@ -197,8 +235,13 @@ class TeamsChannel implements Channel {
     try {
       const result = await graphGet<{ value: TeamsMessage[] }>(url);
       messages = result.value || [];
-    } catch (err) {
-      logger.warn({ chatId: chat.id, err }, 'Failed to fetch Teams messages');
+    } catch (err: unknown) {
+      const status = (err as { statusCode?: number }).statusCode;
+      if (status === 403) {
+        logger.debug({ chatId: chat.id }, 'Skipping Teams chat (not a member)');
+      } else {
+        logger.warn({ chatId: chat.id, err }, 'Failed to fetch Teams messages');
+      }
       return;
     }
 
@@ -214,14 +257,10 @@ class TeamsChannel implements Channel {
       // Skip system messages
       if (msg.messageType !== 'message') continue;
 
-      // Skip our own messages — unless this is the main group (self-chat for commands)
       const isFromMe = msg.from?.user?.id === this.selfUserId;
-      if (isFromMe) {
-        const group = this.opts.registeredGroups()[jid];
-        if (!group?.isMain) continue;
-      }
 
-      const senderId = msg.from?.user?.id || msg.from?.application?.id || 'unknown';
+      const senderId =
+        msg.from?.user?.id || msg.from?.application?.id || 'unknown';
       const senderName =
         msg.from?.user?.displayName ||
         msg.from?.application?.displayName ||
