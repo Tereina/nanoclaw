@@ -12,7 +12,6 @@ console.log('--- Approach 1: Beta API ---');
 try {
   const beta = await graphGet<{ value: any[] }>(
     '/me/chats?$top=50&$expand=members',
-    true, // use beta
   );
   for (const chat of beta.value) {
     const memberIds =
