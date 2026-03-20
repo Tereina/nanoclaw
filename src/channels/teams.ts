@@ -262,8 +262,14 @@ class TeamsChannel implements Channel {
       const message = (err as { message?: string }).message || '';
       if (status === 403) {
         logger.debug({ chatId }, 'Skipping delta prime (not a member)');
-      } else if (status === 400 && message.includes('Change tracking is not supported')) {
-        logger.debug({ chatId }, 'Skipping delta prime (change tracking not supported)');
+      } else if (
+        status === 400 &&
+        message.includes('Change tracking is not supported')
+      ) {
+        logger.debug(
+          { chatId },
+          'Skipping delta prime (change tracking not supported)',
+        );
       } else {
         logger.warn({ chatId, err }, 'Failed to prime delta token');
       }
@@ -385,7 +391,10 @@ class TeamsChannel implements Channel {
         return;
       }
       const message = (err as { message?: string }).message || '';
-      if (status === 400 && message.includes('Change tracking is not supported')) {
+      if (
+        status === 400 &&
+        message.includes('Change tracking is not supported')
+      ) {
         // Meeting chats don't support delta — silently skip
         return;
       }
