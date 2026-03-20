@@ -105,7 +105,10 @@ export function startIpcWatcher(deps: IpcDeps): void {
                 // Rate limited — move to errors
                 const errorDir = path.join(ipcBaseDir, 'errors');
                 fs.mkdirSync(errorDir, { recursive: true });
-                fs.renameSync(filePath, path.join(errorDir, `ratelimit-${sourceGroup}-${file}`));
+                fs.renameSync(
+                  filePath,
+                  path.join(errorDir, `ratelimit-${sourceGroup}-${file}`),
+                );
                 continue;
               }
               const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
@@ -219,136 +222,99 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   }
               } else if (data.type === 'search_emails' && data.requestId) {
                 if (!isMain) {
-                  logger.warn({ sourceGroup }, 'Unauthorized search_emails attempt blocked (main only)');
-                  const responsesDir = path.join(ipcBaseDir, sourceGroup, 'responses');
+                  logger.warn(
+                    { sourceGroup },
+                    'Unauthorized search_emails attempt blocked (main only)',
+                  );
+                  const responsesDir = path.join(
+                    ipcBaseDir,
+                    sourceGroup,
+                    'responses',
+                  );
                   fs.mkdirSync(responsesDir, { recursive: true });
                   fs.writeFileSync(
                     path.join(responsesDir, `${data.requestId}.json`),
-                    JSON.stringify({ requestId: data.requestId, results: [], totalCount: 0, error: 'Only the main group can search emails' }),
-                  );
-                } else
-                // Search emails via Graph API and write response file
-                try {
-                  const results = await searchOutlookEmails({
-                    query: data.query,
-                    from: data.from,
-                    subject: data.subject,
-                    after: data.after,
-                    before: data.before,
-                    top: data.top ? parseInt(data.top, 10) : undefined,
-                  });
-                  const responsesDir = path.join(
-                    ipcBaseDir,
-                    sourceGroup,
-                    'responses',
-                  );
-                  fs.mkdirSync(responsesDir, { recursive: true });
-                  const responseFile = path.join(
-                    responsesDir,
-                    `${data.requestId}.json`,
-                  );
-                  const tempFile = `${responseFile}.tmp`;
-                  fs.writeFileSync(
-                    tempFile,
-                    JSON.stringify(
-                      {
-                        requestId: data.requestId,
-                        results,
-                        totalCount: results.length,
-                      },
-                      null,
-                      2,
-                    ),
-                  );
-                  fs.renameSync(tempFile, responseFile);
-                  logger.info(
-                    {
-                      sourceGroup,
-                      requestId: data.requestId,
-                      resultCount: results.length,
-                    },
-                    'IPC email search completed',
-                  );
-                } catch (err) {
-                  logger.error(
-                    { sourceGroup, requestId: data.requestId, err },
-                    'IPC email search failed',
-                  );
-                  // Write error response so agent doesn't hang
-                  const responsesDir = path.join(
-                    ipcBaseDir,
-                    sourceGroup,
-                    'responses',
-                  );
-                  fs.mkdirSync(responsesDir, { recursive: true });
-                  const responseFile = path.join(
-                    responsesDir,
-                    `${data.requestId}.json`,
-                  );
-                  fs.writeFileSync(
-                    responseFile,
                     JSON.stringify({
                       requestId: data.requestId,
                       results: [],
                       totalCount: 0,
-                      error: err instanceof Error ? err.message : String(err),
+                      error: 'Only the main group can search emails',
                     }),
                   );
-                }
+                } else
+                  // Search emails via Graph API and write response file
+                  try {
+                    const results = await searchOutlookEmails({
+                      query: data.query,
+                      from: data.from,
+                      subject: data.subject,
+                      after: data.after,
+                      before: data.before,
+                      top: data.top ? parseInt(data.top, 10) : undefined,
+                    });
+                    const responsesDir = path.join(
+                      ipcBaseDir,
+                      sourceGroup,
+                      'responses',
+                    );
+                    fs.mkdirSync(responsesDir, { recursive: true });
+                    const responseFile = path.join(
+                      responsesDir,
+                      `${data.requestId}.json`,
+                    );
+                    const tempFile = `${responseFile}.tmp`;
+                    fs.writeFileSync(
+                      tempFile,
+                      JSON.stringify(
+                        {
+                          requestId: data.requestId,
+                          results,
+                          totalCount: results.length,
+                        },
+                        null,
+                        2,
+                      ),
+                    );
+                    fs.renameSync(tempFile, responseFile);
+                    logger.info(
+                      {
+                        sourceGroup,
+                        requestId: data.requestId,
+                        resultCount: results.length,
+                      },
+                      'IPC email search completed',
+                    );
+                  } catch (err) {
+                    logger.error(
+                      { sourceGroup, requestId: data.requestId, err },
+                      'IPC email search failed',
+                    );
+                    // Write error response so agent doesn't hang
+                    const responsesDir = path.join(
+                      ipcBaseDir,
+                      sourceGroup,
+                      'responses',
+                    );
+                    fs.mkdirSync(responsesDir, { recursive: true });
+                    const responseFile = path.join(
+                      responsesDir,
+                      `${data.requestId}.json`,
+                    );
+                    fs.writeFileSync(
+                      responseFile,
+                      JSON.stringify({
+                        requestId: data.requestId,
+                        results: [],
+                        totalCount: 0,
+                        error: err instanceof Error ? err.message : String(err),
+                      }),
+                    );
+                  }
               } else if (data.type === 'search_calendar' && data.requestId) {
                 if (!isMain) {
-                  logger.warn({ sourceGroup }, 'Unauthorized search_calendar attempt blocked (main only)');
-                  const responsesDir = path.join(ipcBaseDir, sourceGroup, 'responses');
-                  fs.mkdirSync(responsesDir, { recursive: true });
-                  fs.writeFileSync(
-                    path.join(responsesDir, `${data.requestId}.json`),
-                    JSON.stringify({ requestId: data.requestId, results: [], totalCount: 0, error: 'Only the main group can search calendar' }),
-                  );
-                } else
-                try {
-                  const results = await searchCalendarEvents({
-                    after: data.after,
-                    before: data.before,
-                    query: data.query,
-                    attendee: data.attendee,
-                    top: data.top ? parseInt(data.top, 10) : undefined,
-                  });
-                  const responsesDir = path.join(
-                    ipcBaseDir,
-                    sourceGroup,
-                    'responses',
-                  );
-                  fs.mkdirSync(responsesDir, { recursive: true });
-                  const responseFile = path.join(
-                    responsesDir,
-                    `${data.requestId}.json`,
-                  );
-                  const tempFile = `${responseFile}.tmp`;
-                  fs.writeFileSync(
-                    tempFile,
-                    JSON.stringify(
-                      {
-                        requestId: data.requestId,
-                        results,
-                        totalCount: results.length,
-                      },
-                      null,
-                      2,
-                    ),
-                  );
-                  fs.renameSync(tempFile, responseFile);
-                  logger.info(
-                    {
-                      sourceGroup,
-                      requestId: data.requestId,
-                      resultCount: results.length,
-                    },
-                    'IPC calendar search completed',
-                  );
-                } catch (err) {
-                  logger.error(
-                    { sourceGroup, requestId: data.requestId, err },
-                    'IPC calendar search failed',
+                  logger.warn(
+                    { sourceGroup },
+                    'Unauthorized search_calendar attempt blocked (main only)',
                   );
                   const responsesDir = path.join(
                     ipcBaseDir,
@@ -362,10 +328,71 @@ export function startIpcWatcher(deps: IpcDeps): void {
                       requestId: data.requestId,
                       results: [],
                       totalCount: 0,
-                      error: err instanceof Error ? err.message : String(err),
+                      error: 'Only the main group can search calendar',
                     }),
                   );
-                }
+                } else
+                  try {
+                    const results = await searchCalendarEvents({
+                      after: data.after,
+                      before: data.before,
+                      query: data.query,
+                      attendee: data.attendee,
+                      top: data.top ? parseInt(data.top, 10) : undefined,
+                    });
+                    const responsesDir = path.join(
+                      ipcBaseDir,
+                      sourceGroup,
+                      'responses',
+                    );
+                    fs.mkdirSync(responsesDir, { recursive: true });
+                    const responseFile = path.join(
+                      responsesDir,
+                      `${data.requestId}.json`,
+                    );
+                    const tempFile = `${responseFile}.tmp`;
+                    fs.writeFileSync(
+                      tempFile,
+                      JSON.stringify(
+                        {
+                          requestId: data.requestId,
+                          results,
+                          totalCount: results.length,
+                        },
+                        null,
+                        2,
+                      ),
+                    );
+                    fs.renameSync(tempFile, responseFile);
+                    logger.info(
+                      {
+                        sourceGroup,
+                        requestId: data.requestId,
+                        resultCount: results.length,
+                      },
+                      'IPC calendar search completed',
+                    );
+                  } catch (err) {
+                    logger.error(
+                      { sourceGroup, requestId: data.requestId, err },
+                      'IPC calendar search failed',
+                    );
+                    const responsesDir = path.join(
+                      ipcBaseDir,
+                      sourceGroup,
+                      'responses',
+                    );
+                    fs.mkdirSync(responsesDir, { recursive: true });
+                    fs.writeFileSync(
+                      path.join(responsesDir, `${data.requestId}.json`),
+                      JSON.stringify({
+                        requestId: data.requestId,
+                        results: [],
+                        totalCount: 0,
+                        error: err instanceof Error ? err.message : String(err),
+                      }),
+                    );
+                  }
               } else if (
                 data.type === 'create_calendar_event' &&
                 data.requestId
@@ -591,7 +618,10 @@ export function startIpcWatcher(deps: IpcDeps): void {
               if (!checkRateLimit(sourceGroup)) {
                 const errorDir = path.join(ipcBaseDir, 'errors');
                 fs.mkdirSync(errorDir, { recursive: true });
-                fs.renameSync(filePath, path.join(errorDir, `ratelimit-${sourceGroup}-${file}`));
+                fs.renameSync(
+                  filePath,
+                  path.join(errorDir, `ratelimit-${sourceGroup}-${file}`),
+                );
                 continue;
               }
               const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));

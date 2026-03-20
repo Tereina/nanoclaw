@@ -437,6 +437,29 @@ async function runQuery(
       lastAssistantUuid = (message as { uuid: string }).uuid;
     }
 
+    // Log tool use details — especially web calls and browser actions
+    if (message.type === 'assistant' && 'message' in message) {
+      const assistantMsg = message as { message?: { content?: Array<{ type: string; name?: string; input?: Record<string, unknown> }> } };
+      for (const block of assistantMsg.message?.content || []) {
+        if (block.type === 'tool_use' && block.name && block.input) {
+          if (block.name === 'WebSearch') {
+            log(`[tool] WebSearch query="${block.input.query || ''}"`);
+          } else if (block.name === 'WebFetch') {
+            log(`[tool] WebFetch url="${block.input.url || ''}"`);
+          } else if (block.name === 'Bash') {
+            const cmd = String(block.input.command || '');
+            if (cmd.startsWith('agent-browser')) {
+              log(`[tool] Bash agent-browser: ${cmd}`);
+            } else {
+              log(`[tool] Bash: ${cmd.slice(0, 200)}`);
+            }
+          } else {
+            log(`[tool] ${block.name}`);
+          }
+        }
+      }
+    }
+
     if (message.type === 'system' && message.subtype === 'init') {
       newSessionId = message.session_id;
       log(`Session initialized: ${newSessionId}`);

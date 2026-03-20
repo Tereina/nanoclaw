@@ -1,5 +1,6 @@
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
+import { isOutlookProcessed, markOutlookProcessed } from './db.js';
 import {
   hasM365Credentials,
   graphGet,
@@ -583,9 +584,6 @@ export async function startOutlookLoop(opts: OutlookLoopOpts): Promise<void> {
     'Starting Outlook email loop',
   );
 
-  // Set to track processed message IDs (prevents reprocessing within a session)
-  const processedIds = new Set<string>();
-
   // Backfill recent emails so the DB isn't empty on first run (paginated)
   try {
     const sevenDaysAgo = new Date(
@@ -603,7 +601,7 @@ export async function startOutlookLoop(opts: OutlookLoopOpts): Promise<void> {
       const backfillMessages = backfillResult.value || [];
 
       for (const msg of backfillMessages) {
-        processedIds.add(msg.id); // Prevent pollInbox from re-triggering agent
+        markOutlookProcessed(msg.id); // Prevent pollInbox from re-triggering agent
 
         // Skip messages without a sender (drafts, system messages, etc.)
         if (!msg.from?.emailAddress) continue;
@@ -677,33 +675,37 @@ export async function startOutlookLoop(opts: OutlookLoopOpts): Promise<void> {
         logger.info(
           {
             unreadCount: messages.length,
-            newCount: messages.filter((m) => !processedIds.has(m.id)).length,
+            newCount: messages.filter((m) => !isOutlookProcessed(m.id)).length,
           },
           'Outlook poll: found unread emails',
         );
       }
 
       for (const msg of messages) {
-        if (processedIds.has(msg.id)) continue;
+        if (isOutlookProcessed(msg.id)) continue;
 
         // Classify by alias
         const aliasMatch = classifyByAlias(msg, aliases);
+
+        if (!aliasMatch && mode === 'alias') {
+          logger.debug(
+            { subject: msg.subject, from: msg.from.emailAddress.address },
+            'Outlook: skipping non-alias email',
+          );
+          // Not addressed to any configured alias — mark processed in DB
+          // so it won't reappear after restart
+          markOutlookProcessed(msg.id);
+          continue;
+        }
 
         logger.info(
           {
             subject: msg.subject,
             from: msg.from.emailAddress.address,
-            to: msg.toRecipients.map((r) => r.emailAddress.address),
             aliasMatched: aliasMatch?.alias || null,
-            mode,
           },
           'Outlook: processing email',
         );
-
-        if (!aliasMatch && mode === 'alias') {
-          // Not addressed to any configured alias, skip
-          continue;
-        }
 
         const targetAlias = aliasMatch?.alias || 'default';
         const targetFolder = aliasMatch?.groupFolder || defaultGroup;
@@ -775,7 +777,7 @@ export async function startOutlookLoop(opts: OutlookLoopOpts): Promise<void> {
         // Store only — no automatic agent runs.
         // All actions (drafting replies, etc.) must be explicitly requested
         // from the main Teams channel.
-        processedIds.add(msg.id);
+        markOutlookProcessed(msg.id);
         await markAsRead(msg.id);
 
         if (aliasMatch) {

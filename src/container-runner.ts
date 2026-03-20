@@ -393,7 +393,13 @@ export async function runContainerAgent(
       const chunk = data.toString();
       const lines = chunk.trim().split('\n');
       for (const line of lines) {
-        if (line) logger.debug({ container: group.folder }, line);
+        if (!line) continue;
+        // Promote agent-runner tool/activity lines to info so they appear in default logs
+        if (line.includes('[agent-runner] [tool]') || line.includes('[agent-runner] [msg') || line.includes('[agent-runner] Result') || line.includes('[agent-runner] Starting query') || line.includes('[agent-runner] Session initialized')) {
+          logger.info({ container: group.folder }, line);
+        } else {
+          logger.debug({ container: group.folder }, line);
+        }
       }
       // Don't reset timeout on stderr — SDK writes debug logs continuously.
       // Timeout only resets on actual output (OUTPUT_MARKER in stdout).

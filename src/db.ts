@@ -155,6 +155,14 @@ function createSchema(database: Database.Database): void {
   } catch {
     /* columns already exist */
   }
+
+  // Outlook processed email IDs — persists across restarts so we never reprocess
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS outlook_processed_ids (
+      id TEXT PRIMARY KEY,
+      processed_at TEXT NOT NULL
+    );
+  `);
 }
 
 export function initDatabase(): void {
@@ -689,6 +697,18 @@ export function upsertEmailThread(thread: EmailThreadRow): void {
     thread.last_message_id,
     thread.created_at,
   );
+}
+
+// --- Outlook processed IDs ---
+
+export function isOutlookProcessed(id: string): boolean {
+  return !!db.prepare('SELECT 1 FROM outlook_processed_ids WHERE id = ?').get(id);
+}
+
+export function markOutlookProcessed(id: string): void {
+  db.prepare(
+    'INSERT OR IGNORE INTO outlook_processed_ids (id, processed_at) VALUES (?, ?)',
+  ).run(id, new Date().toISOString());
 }
 
 // --- JSON migration ---

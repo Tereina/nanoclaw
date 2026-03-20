@@ -44,10 +44,13 @@ npm run build        # Compile TypeScript
 
 Service management:
 ```bash
-# macOS (launchd)
-launchctl load ~/Library/LaunchAgents/com.nanoclaw.plist
-launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist
-launchctl kickstart -k gui/$(id -u)/com.nanoclaw  # restart
+# macOS — managed by MyAssistantOrchestrator.app
+# The app auto-restarts the orchestrator. Do NOT start node manually.
+# To restart: just kill the running process; the app relaunches it.
+kill $(pgrep -f 'node.*dist/index.js')   # app auto-restarts within ~10s
+
+# If app is not running, launch it:
+open app/build/MyAssistantOrchestrator.app
 
 # Linux (systemd)
 systemctl --user start nanoclaw
