@@ -17,6 +17,7 @@ import {
   TIMEZONE,
 } from './config.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
+import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
 import {
   CONTAINER_HOST_GATEWAY,
@@ -250,10 +251,11 @@ function buildContainerArgs(
   }
 
   // Pass Atlassian credentials to container for MCP server
-  if (process.env.ATLASSIAN_BASE_URL) {
-    args.push('-e', `ATLASSIAN_BASE_URL=${process.env.ATLASSIAN_BASE_URL}`);
-    args.push('-e', `ATLASSIAN_EMAIL=${process.env.ATLASSIAN_EMAIL}`);
-    args.push('-e', `ATLASSIAN_API_TOKEN=${process.env.ATLASSIAN_API_TOKEN}`);
+  const atlassianEnv = readEnvFile(['ATLASSIAN_BASE_URL', 'ATLASSIAN_EMAIL', 'ATLASSIAN_API_TOKEN']);
+  if (atlassianEnv.ATLASSIAN_BASE_URL) {
+    args.push('-e', `ATLASSIAN_BASE_URL=${atlassianEnv.ATLASSIAN_BASE_URL}`);
+    args.push('-e', `ATLASSIAN_EMAIL=${atlassianEnv.ATLASSIAN_EMAIL}`);
+    args.push('-e', `ATLASSIAN_API_TOKEN=${atlassianEnv.ATLASSIAN_API_TOKEN}`);
   }
 
   // Runtime-specific args for host gateway resolution

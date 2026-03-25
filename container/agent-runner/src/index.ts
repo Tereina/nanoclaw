@@ -426,8 +426,8 @@ async function runQuery(
         },
         ...(process.env.ATLASSIAN_BASE_URL ? {
           atlassian: {
-            command: 'npx',
-            args: ['mcp-atlassian'],
+            command: 'node',
+            args: ['/app/node_modules/mcp-atlassian/dist/index.js'],
             env: {
               ATLASSIAN_BASE_URL: process.env.ATLASSIAN_BASE_URL,
               ATLASSIAN_EMAIL: process.env.ATLASSIAN_EMAIL || '',
