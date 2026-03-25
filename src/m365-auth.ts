@@ -73,6 +73,8 @@ function persistCache(): void {
       msalApp.getTokenCache().serialize(),
       'utf-8',
     );
+    // Restrict to owner-only read/write
+    fs.chmodSync(TOKEN_CACHE_PATH, 0o600);
   } catch (err) {
     logger.warn({ err }, 'Failed to persist M365 token cache');
   }
@@ -80,6 +82,7 @@ function persistCache(): void {
 
 // Delegated scopes (not /.default — that's for client credentials only)
 const GRAPH_SCOPES = [
+  'Calendars.ReadWrite',
   'Chat.ReadWrite',
   'ChannelMessage.Read.All',
   'ChannelMessage.Send',

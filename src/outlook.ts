@@ -1,5 +1,6 @@
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
+import { isOutlookProcessed, markOutlookProcessed } from './db.js';
 import {
   hasM365Credentials,
   graphGet,
@@ -25,6 +26,7 @@ interface OutlookMessage {
   isRead: boolean;
   parentFolderId: string;
   inferenceClassification?: 'focused' | 'other';
+  internetMessageHeaders?: Array<{ name: string; value: string }>;
 }
 
 interface MailFolder {
@@ -198,6 +200,7 @@ function classifyByAlias(
   msg: OutlookMessage,
   aliases: AliasMapping[],
 ): AliasMapping | null {
+  // Check the resolved toRecipients/ccRecipients first
   const allRecipients = [
     ...msg.toRecipients.map((r) => r.emailAddress.address.toLowerCase()),
     ...msg.ccRecipients.map((r) => r.emailAddress.address.toLowerCase()),
@@ -208,6 +211,25 @@ function classifyByAlias(
       return mapping;
     }
   }
+
+  // Exchange rewrites alias addresses to the primary SMTP address in toRecipients.
+  // Check the raw internet message headers (To/CC) which preserve the original alias.
+  if (msg.internetMessageHeaders) {
+    const rawTo =
+      msg.internetMessageHeaders
+        .filter(
+          (h) => h.name.toLowerCase() === 'to' || h.name.toLowerCase() === 'cc',
+        )
+        .map((h) => h.value.toLowerCase())
+        .join(' ') || '';
+
+    for (const mapping of aliases) {
+      if (rawTo.includes(mapping.alias)) {
+        return mapping;
+      }
+    }
+  }
+
   return null;
 }
 
@@ -562,9 +584,6 @@ export async function startOutlookLoop(opts: OutlookLoopOpts): Promise<void> {
     'Starting Outlook email loop',
   );
 
-  // Set to track processed message IDs (prevents reprocessing within a session)
-  const processedIds = new Set<string>();
-
   // Backfill recent emails so the DB isn't empty on first run (paginated)
   try {
     const sevenDaysAgo = new Date(
@@ -582,7 +601,7 @@ export async function startOutlookLoop(opts: OutlookLoopOpts): Promise<void> {
       const backfillMessages = backfillResult.value || [];
 
       for (const msg of backfillMessages) {
-        processedIds.add(msg.id); // Prevent pollInbox from re-triggering agent
+        markOutlookProcessed(msg.id); // Prevent pollInbox from re-triggering agent
 
         // Skip messages without a sender (drafts, system messages, etc.)
         if (!msg.from?.emailAddress) continue;
@@ -647,21 +666,46 @@ export async function startOutlookLoop(opts: OutlookLoopOpts): Promise<void> {
   async function pollInbox(): Promise<void> {
     try {
       const result = await graphGet<{ value: OutlookMessage[] }>(
-        '/me/mailFolders/inbox/messages?$filter=isRead eq false&$top=50&$orderby=receivedDateTime asc&$select=id,conversationId,internetMessageId,subject,bodyPreview,body,from,toRecipients,ccRecipients,receivedDateTime,isRead,parentFolderId,inferenceClassification',
+        '/me/mailFolders/inbox/messages?$filter=isRead eq false&$top=50&$orderby=receivedDateTime desc&$select=id,conversationId,internetMessageId,subject,bodyPreview,body,from,toRecipients,ccRecipients,receivedDateTime,isRead,parentFolderId,inferenceClassification,internetMessageHeaders',
       );
 
       const messages = result.value || [];
 
+      if (messages.length > 0) {
+        logger.info(
+          {
+            unreadCount: messages.length,
+            newCount: messages.filter((m) => !isOutlookProcessed(m.id)).length,
+          },
+          'Outlook poll: found unread emails',
+        );
+      }
+
       for (const msg of messages) {
-        if (processedIds.has(msg.id)) continue;
+        if (isOutlookProcessed(msg.id)) continue;
 
         // Classify by alias
         const aliasMatch = classifyByAlias(msg, aliases);
 
         if (!aliasMatch && mode === 'alias') {
-          // Not addressed to any configured alias, skip
+          logger.debug(
+            { subject: msg.subject, from: msg.from.emailAddress.address },
+            'Outlook: skipping non-alias email',
+          );
+          // Not addressed to any configured alias — mark processed in DB
+          // so it won't reappear after restart
+          markOutlookProcessed(msg.id);
           continue;
         }
+
+        logger.info(
+          {
+            subject: msg.subject,
+            from: msg.from.emailAddress.address,
+            aliasMatched: aliasMatch?.alias || null,
+          },
+          'Outlook: processing email',
+        );
 
         const targetAlias = aliasMatch?.alias || 'default';
         const targetFolder = aliasMatch?.groupFolder || defaultGroup;
@@ -730,45 +774,18 @@ export async function startOutlookLoop(opts: OutlookLoopOpts): Promise<void> {
         );
         opts.storeMessage(storedMsg);
 
-        // Run agent with fresh session
-        try {
-          const agentResult = await opts.runEmailAgent(
-            targetFolder,
-            chatJid,
-            prompt,
-          );
+        // Store only — no automatic agent runs.
+        // All actions (drafting replies, etc.) must be explicitly requested
+        // from the main Teams channel.
+        markOutlookProcessed(msg.id);
+        await markAsRead(msg.id);
 
-          // Forward output to main channel — only for focused inbox emails from real people
-          const isFocused = msg.inferenceClassification !== 'other';
-          const isRealPerson = !isLikelyAutomated(
-            msg.from.emailAddress.address,
-          );
-          if (agentResult && isFocused && isRealPerson) {
-            const summary = `[Outlook → ${targetAlias}] ${msg.subject}\n${agentResult}`;
-            await opts.sendToMainChannel(summary);
+        if (aliasMatch) {
+          const folderName = `NanoClaw - ${aliasMatch.groupFolder}`;
+          const folderId = folderIdCache.get(folderName);
+          if (folderId) {
+            await moveToFolder(msg.id, folderId);
           }
-
-          // Mark processed + read + move to subfolder
-          processedIds.add(msg.id);
-          await markAsRead(msg.id);
-
-          if (aliasMatch) {
-            const folderName = `NanoClaw - ${aliasMatch.groupFolder}`;
-            const folderId = folderIdCache.get(folderName);
-            if (folderId) {
-              await moveToFolder(msg.id, folderId);
-            }
-          }
-        } catch (err) {
-          logger.error(
-            {
-              messageId: msg.id,
-              subject: msg.subject,
-              err,
-            },
-            'Failed to process email — leaving unread for retry',
-          );
-          // Don't mark as processed — will retry next cycle
         }
       }
     } catch (err) {

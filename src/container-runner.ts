@@ -17,6 +17,7 @@ import {
   TIMEZONE,
 } from './config.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
+import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
 import {
   CONTAINER_HOST_GATEWAY,
@@ -100,6 +101,16 @@ function buildVolumeMounts(
       containerPath: '/workspace/group',
       readonly: false,
     });
+
+    // Mount CLAUDE.md as read-only overlay to prevent agent from modifying its own instructions
+    const claudeMdPath = path.join(groupDir, 'CLAUDE.md');
+    if (fs.existsSync(claudeMdPath)) {
+      mounts.push({
+        hostPath: claudeMdPath,
+        containerPath: '/workspace/group/CLAUDE.md',
+        readonly: true,
+      });
+    }
 
     // Global memory directory (read-only for non-main)
     // Only directory mounts are supported, not file mounts
@@ -237,6 +248,14 @@ function buildContainerArgs(
     args.push('-e', 'ANTHROPIC_API_KEY=placeholder');
   } else {
     args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
+  }
+
+  // Pass Atlassian credentials to container for MCP server
+  const atlassianEnv = readEnvFile(['ATLASSIAN_BASE_URL', 'ATLASSIAN_EMAIL', 'ATLASSIAN_API_TOKEN']);
+  if (atlassianEnv.ATLASSIAN_BASE_URL) {
+    args.push('-e', `ATLASSIAN_BASE_URL=${atlassianEnv.ATLASSIAN_BASE_URL}`);
+    args.push('-e', `ATLASSIAN_EMAIL=${atlassianEnv.ATLASSIAN_EMAIL}`);
+    args.push('-e', `ATLASSIAN_API_TOKEN=${atlassianEnv.ATLASSIAN_API_TOKEN}`);
   }
 
   // Runtime-specific args for host gateway resolution
@@ -383,7 +402,19 @@ export async function runContainerAgent(
       const chunk = data.toString();
       const lines = chunk.trim().split('\n');
       for (const line of lines) {
-        if (line) logger.debug({ container: group.folder }, line);
+        if (!line) continue;
+        // Promote agent-runner tool/activity lines to info so they appear in default logs
+        if (
+          line.includes('[agent-runner] [tool]') ||
+          line.includes('[agent-runner] [msg') ||
+          line.includes('[agent-runner] Result') ||
+          line.includes('[agent-runner] Starting query') ||
+          line.includes('[agent-runner] Session initialized')
+        ) {
+          logger.info({ container: group.folder }, line);
+        } else {
+          logger.debug({ container: group.folder }, line);
+        }
       }
       // Don't reset timeout on stderr — SDK writes debug logs continuously.
       // Timeout only resets on actual output (OUTPUT_MARKER in stdout).
@@ -667,6 +698,32 @@ export function writeTasksSnapshot(
 
   const tasksFile = path.join(groupIpcDir, 'current_tasks.json');
   fs.writeFileSync(tasksFile, JSON.stringify(filteredTasks, null, 2));
+}
+
+export function writeProjectsSnapshot(
+  groupFolder: string,
+  isMain: boolean,
+  projects: Array<{
+    id: string;
+    groupFolder: string;
+    name: string;
+    description: string;
+    workflow: unknown[];
+    current_step: number;
+    status: string;
+    check_interval_ms: number;
+    updated_at: string;
+  }>,
+): void {
+  const groupIpcDir = resolveGroupIpcPath(groupFolder);
+  fs.mkdirSync(groupIpcDir, { recursive: true });
+
+  const filteredProjects = isMain
+    ? projects
+    : projects.filter((p) => p.groupFolder === groupFolder);
+
+  const projectsFile = path.join(groupIpcDir, 'current_projects.json');
+  fs.writeFileSync(projectsFile, JSON.stringify(filteredProjects, null, 2));
 }
 
 export interface AvailableGroup {

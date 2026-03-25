@@ -407,7 +407,8 @@ async function runQuery(
         'TeamCreate', 'TeamDelete', 'SendMessage',
         'TodoWrite', 'ToolSearch', 'Skill',
         'NotebookEdit',
-        'mcp__nanoclaw__*'
+        'mcp__nanoclaw__*',
+        'mcp__atlassian__*'
       ],
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
@@ -423,6 +424,17 @@ async function runQuery(
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
           },
         },
+        ...(process.env.ATLASSIAN_BASE_URL ? {
+          atlassian: {
+            command: 'node',
+            args: ['/app/node_modules/mcp-atlassian/dist/index.js'],
+            env: {
+              ATLASSIAN_BASE_URL: process.env.ATLASSIAN_BASE_URL,
+              ATLASSIAN_EMAIL: process.env.ATLASSIAN_EMAIL || '',
+              ATLASSIAN_API_TOKEN: process.env.ATLASSIAN_API_TOKEN || '',
+            },
+          },
+        } : {}),
       },
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
@@ -435,6 +447,29 @@ async function runQuery(
 
     if (message.type === 'assistant' && 'uuid' in message) {
       lastAssistantUuid = (message as { uuid: string }).uuid;
+    }
+
+    // Log tool use details — especially web calls and browser actions
+    if (message.type === 'assistant' && 'message' in message) {
+      const assistantMsg = message as { message?: { content?: Array<{ type: string; name?: string; input?: Record<string, unknown> }> } };
+      for (const block of assistantMsg.message?.content || []) {
+        if (block.type === 'tool_use' && block.name && block.input) {
+          if (block.name === 'WebSearch') {
+            log(`[tool] WebSearch query="${block.input.query || ''}"`);
+          } else if (block.name === 'WebFetch') {
+            log(`[tool] WebFetch url="${block.input.url || ''}"`);
+          } else if (block.name === 'Bash') {
+            const cmd = String(block.input.command || '');
+            if (cmd.startsWith('agent-browser')) {
+              log(`[tool] Bash agent-browser: ${cmd}`);
+            } else {
+              log(`[tool] Bash: ${cmd.slice(0, 200)}`);
+            }
+          } else {
+            log(`[tool] ${block.name}`);
+          }
+        }
+      }
     }
 
     if (message.type === 'system' && message.subtype === 'init') {
