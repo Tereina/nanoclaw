@@ -60,13 +60,21 @@ interface VolumeMount {
 
 function buildMainMounts(projectRoot: string, groupDir: string): VolumeMount[] {
   const mounts: VolumeMount[] = [
-    { hostPath: projectRoot, containerPath: '/workspace/project', readonly: true },
+    {
+      hostPath: projectRoot,
+      containerPath: '/workspace/project',
+      readonly: true,
+    },
     { hostPath: groupDir, containerPath: '/workspace/group', readonly: false },
   ];
   // Shadow .env so the agent cannot read secrets from the mounted project root
   const envFile = path.join(projectRoot, '.env');
   if (fs.existsSync(envFile)) {
-    mounts.push({ hostPath: '/dev/null', containerPath: '/workspace/project/.env', readonly: true });
+    mounts.push({
+      hostPath: '/dev/null',
+      containerPath: '/workspace/project/.env',
+      readonly: true,
+    });
   }
   return mounts;
 }
@@ -78,7 +86,11 @@ function buildNonMainMounts(groupDir: string): VolumeMount[] {
   // Mount CLAUDE.md as read-only overlay to prevent agent from modifying its own instructions
   const claudeMdPath = path.join(groupDir, 'CLAUDE.md');
   if (fs.existsSync(claudeMdPath)) {
-    mounts.push({ hostPath: claudeMdPath, containerPath: '/workspace/group/CLAUDE.md', readonly: true });
+    mounts.push({
+      hostPath: claudeMdPath,
+      containerPath: '/workspace/group/CLAUDE.md',
+      readonly: true,
+    });
   }
   return mounts;
 }
@@ -89,12 +101,18 @@ function buildVolumeMounts(
 ): VolumeMount[] {
   const projectRoot = process.cwd();
   const groupDir = resolveGroupFolderPath(group.folder);
-  const mounts = isMain ? buildMainMounts(projectRoot, groupDir) : buildNonMainMounts(groupDir);
+  const mounts = isMain
+    ? buildMainMounts(projectRoot, groupDir)
+    : buildNonMainMounts(groupDir);
 
   // Global directory (read-only) — shared instructions and installed-tools docs
   const globalDir = path.join(GROUPS_DIR, 'global');
   if (fs.existsSync(globalDir)) {
-    mounts.push({ hostPath: globalDir, containerPath: '/workspace/global', readonly: true });
+    mounts.push({
+      hostPath: globalDir,
+      containerPath: '/workspace/global',
+      readonly: true,
+    });
   }
 
   // Per-group Claude sessions directory (isolated from other groups)
@@ -205,8 +223,10 @@ function buildContainerArgs(
 
   // Pass host timezone and route API traffic through the credential proxy
   args.push(
-    '-e', `TZ=${TIMEZONE}`,
-    '-e', `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`,
+    '-e',
+    `TZ=${TIMEZONE}`,
+    '-e',
+    `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`,
   );
 
   // Mirror the host's auth method with a placeholder value.
@@ -221,12 +241,19 @@ function buildContainerArgs(
   }
 
   // Pass Atlassian credentials to container for MCP server
-  const atlassianEnv = readEnvFile(['ATLASSIAN_BASE_URL', 'ATLASSIAN_EMAIL', 'ATLASSIAN_API_TOKEN']);
+  const atlassianEnv = readEnvFile([
+    'ATLASSIAN_BASE_URL',
+    'ATLASSIAN_EMAIL',
+    'ATLASSIAN_API_TOKEN',
+  ]);
   if (atlassianEnv.ATLASSIAN_BASE_URL) {
     args.push(
-      '-e', `ATLASSIAN_BASE_URL=${atlassianEnv.ATLASSIAN_BASE_URL}`,
-      '-e', `ATLASSIAN_EMAIL=${atlassianEnv.ATLASSIAN_EMAIL}`,
-      '-e', `ATLASSIAN_API_TOKEN=${atlassianEnv.ATLASSIAN_API_TOKEN}`,
+      '-e',
+      `ATLASSIAN_BASE_URL=${atlassianEnv.ATLASSIAN_BASE_URL}`,
+      '-e',
+      `ATLASSIAN_EMAIL=${atlassianEnv.ATLASSIAN_EMAIL}`,
+      '-e',
+      `ATLASSIAN_API_TOKEN=${atlassianEnv.ATLASSIAN_API_TOKEN}`,
     );
   }
 
@@ -239,13 +266,19 @@ function buildContainerArgs(
   // Mount GCP credentials for gcloud MCP server
   // Check .env first, then fall back to default ADC path
   const gcpEnv = readEnvFile(['GOOGLE_APPLICATION_CREDENTIALS']);
-  const gcpCredPath = gcpEnv.GOOGLE_APPLICATION_CREDENTIALS
-    || path.join(os.homedir(), '.config/gcloud/application_default_credentials.json');
+  const gcpCredPath =
+    gcpEnv.GOOGLE_APPLICATION_CREDENTIALS ||
+    path.join(
+      os.homedir(),
+      '.config/gcloud/application_default_credentials.json',
+    );
   if (fs.existsSync(gcpCredPath)) {
     const containerCredPath = '/workspace/.gcp-credentials.json';
     args.push(
-      '-v', `${gcpCredPath}:${containerCredPath}:ro`,
-      '-e', `GOOGLE_APPLICATION_CREDENTIALS=${containerCredPath}`,
+      '-v',
+      `${gcpCredPath}:${containerCredPath}:ro`,
+      '-e',
+      `GOOGLE_APPLICATION_CREDENTIALS=${containerCredPath}`,
     );
   }
 
@@ -285,10 +318,16 @@ interface ContainerRunContext {
   stderrTruncated: boolean;
 }
 
-function writeContainerLog(logsDir: string, ctx: ContainerRunContext, code: number | null, duration: number): string {
+function writeContainerLog(
+  logsDir: string,
+  ctx: ContainerRunContext,
+  code: number | null,
+  duration: number,
+): string {
   const timestamp = new Date().toISOString().replaceAll(/[:.]/g, '-');
   const logFile = path.join(logsDir, `container-${timestamp}.log`);
-  const isVerbose = process.env.LOG_LEVEL === 'debug' || process.env.LOG_LEVEL === 'trace';
+  const isVerbose =
+    process.env.LOG_LEVEL === 'debug' || process.env.LOG_LEVEL === 'trace';
   const isError = code !== 0;
 
   const logLines = [
@@ -305,20 +344,37 @@ function writeContainerLog(logsDir: string, ctx: ContainerRunContext, code: numb
 
   if (isVerbose || isError) {
     logLines.push(
-      `=== Input ===`, JSON.stringify(ctx.input, null, 2), ``,
-      `=== Container Args ===`, ctx.containerArgs.join(' '), ``,
+      `=== Input ===`,
+      JSON.stringify(ctx.input, null, 2),
+      ``,
+      `=== Container Args ===`,
+      ctx.containerArgs.join(' '),
+      ``,
       `=== Mounts ===`,
-      ctx.mounts.map(m => `${m.hostPath} -> ${m.containerPath}${m.readonly ? ' (ro)' : ''}`).join('\n'), ``,
-      `=== Stderr${ctx.stderrTruncated ? ' (TRUNCATED)' : ''} ===`, ctx.stderr, ``,
-      `=== Stdout${ctx.stdoutTruncated ? ' (TRUNCATED)' : ''} ===`, ctx.stdout,
+      ctx.mounts
+        .map(
+          (m) =>
+            `${m.hostPath} -> ${m.containerPath}${m.readonly ? ' (ro)' : ''}`,
+        )
+        .join('\n'),
+      ``,
+      `=== Stderr${ctx.stderrTruncated ? ' (TRUNCATED)' : ''} ===`,
+      ctx.stderr,
+      ``,
+      `=== Stdout${ctx.stdoutTruncated ? ' (TRUNCATED)' : ''} ===`,
+      ctx.stdout,
     );
   } else {
     logLines.push(
       `=== Input Summary ===`,
       `Prompt length: ${ctx.input.prompt.length} chars`,
-      `Session ID: ${ctx.input.sessionId || 'new'}`, ``,
+      `Session ID: ${ctx.input.sessionId || 'new'}`,
+      ``,
       `=== Mounts ===`,
-      ctx.mounts.map(m => `${m.containerPath}${m.readonly ? ' (ro)' : ''}`).join('\n'), ``,
+      ctx.mounts
+        .map((m) => `${m.containerPath}${m.readonly ? ' (ro)' : ''}`)
+        .join('\n'),
+      ``,
     );
   }
 
@@ -331,7 +387,9 @@ function parseLegacyOutput(stdout: string): ContainerOutput {
   const startIdx = stdout.indexOf(OUTPUT_START_MARKER);
   const endIdx = stdout.indexOf(OUTPUT_END_MARKER);
   if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
-    return JSON.parse(stdout.slice(startIdx + OUTPUT_START_MARKER.length, endIdx).trim());
+    return JSON.parse(
+      stdout.slice(startIdx + OUTPUT_START_MARKER.length, endIdx).trim(),
+    );
   }
   // Fallback: last non-empty line (backwards compatibility)
   const lines = stdout.trim().split('\n');
@@ -349,7 +407,7 @@ const PROMOTED_STDERR_PATTERNS = [
 function logStderrLines(chunk: string, folder: string): void {
   for (const line of chunk.trim().split('\n')) {
     if (!line) continue;
-    const promote = PROMOTED_STDERR_PATTERNS.some(p => line.includes(p));
+    const promote = PROMOTED_STDERR_PATTERNS.some((p) => line.includes(p));
     if (promote) {
       logger.info({ container: folder }, line);
     } else {
@@ -480,7 +538,10 @@ export async function runContainerAgent(
       if (chunk.length > remaining) {
         stderr += chunk.slice(0, remaining);
         stderrTruncated = true;
-        logger.warn({ group: group.name, size: stderr.length }, 'Container stderr truncated due to size limit');
+        logger.warn(
+          { group: group.name, size: stderr.length },
+          'Container stderr truncated due to size limit',
+        );
       } else {
         stderr += chunk;
       }
@@ -569,7 +630,16 @@ export async function runContainerAgent(
         return;
       }
 
-      const ctx: ContainerRunContext = { group, input, containerArgs, mounts, stdout, stderr, stdoutTruncated, stderrTruncated };
+      const ctx: ContainerRunContext = {
+        group,
+        input,
+        containerArgs,
+        mounts,
+        stdout,
+        stderr,
+        stdoutTruncated,
+        stderrTruncated,
+      };
       const logFile = writeContainerLog(logsDir, ctx, code, duration);
 
       if (code !== 0) {
@@ -612,7 +682,15 @@ export async function runContainerAgent(
       // Legacy mode: parse the last output marker pair from accumulated stdout
       try {
         const output = parseLegacyOutput(stdout);
-        logger.info({ group: group.name, duration, status: output.status, hasResult: !!output.result }, 'Container completed');
+        logger.info(
+          {
+            group: group.name,
+            duration,
+            status: output.status,
+            hasResult: !!output.result,
+          },
+          'Container completed',
+        );
         resolve(output);
       } catch (err) {
         logger.error(
