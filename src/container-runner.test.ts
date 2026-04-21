@@ -208,3 +208,60 @@ describe('container-runner timeout behavior', () => {
     expect(result.newSessionId).toBe('session-456');
   });
 });
+
+describe('redactContainerArgs', () => {
+  it('redacts values for sensitive env keys and preserves the rest', async () => {
+    const { redactContainerArgs } = await import('./container-runner.js');
+    const args = [
+      'run',
+      '-i',
+      '--rm',
+      '-e',
+      'TZ=America/Los_Angeles',
+      '-e',
+      'GITHUB_TOKEN=ghp_realsecret',
+      '-e',
+      'ATLASSIAN_API_TOKEN=ATATT3xSecret',
+      '-e',
+      'ATLASSIAN_EMAIL=user@example.com',
+      '-e',
+      'CLAUDE_CODE_OAUTH_TOKEN=placeholder',
+      '-e',
+      'ANTHROPIC_API_KEY=placeholder',
+      '-v',
+      '/host:/container',
+      'nanoclaw-agent:latest',
+    ];
+
+    const out = redactContainerArgs(args);
+    const joined = out.join(' ');
+
+    expect(joined).not.toContain('ghp_realsecret');
+    expect(joined).not.toContain('ATATT3xSecret');
+    expect(joined).toContain('GITHUB_TOKEN=[REDACTED]');
+    expect(joined).toContain('ATLASSIAN_API_TOKEN=[REDACTED]');
+    // Placeholder values still get redacted because KEY matches pattern — that's fine
+    expect(joined).toContain('CLAUDE_CODE_OAUTH_TOKEN=[REDACTED]');
+    expect(joined).toContain('ANTHROPIC_API_KEY=[REDACTED]');
+    // Non-sensitive values preserved verbatim
+    expect(joined).toContain('TZ=America/Los_Angeles');
+    expect(joined).toContain('ATLASSIAN_EMAIL=user@example.com');
+    expect(joined).toContain('-v /host:/container');
+    expect(joined).toContain('nanoclaw-agent:latest');
+    // Length preserved (same number of args)
+    expect(out.length).toBe(args.length);
+  });
+
+  it('handles -e at the end of args without crashing', async () => {
+    const { redactContainerArgs } = await import('./container-runner.js');
+    expect(redactContainerArgs(['run', '-e'])).toEqual(['run', '-e']);
+  });
+
+  it('leaves -e args without = untouched', async () => {
+    const { redactContainerArgs } = await import('./container-runner.js');
+    expect(redactContainerArgs(['-e', 'PASSTHROUGH_VAR'])).toEqual([
+      '-e',
+      'PASSTHROUGH_VAR',
+    ]);
+  });
+});

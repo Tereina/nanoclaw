@@ -214,6 +214,30 @@ function buildVolumeMounts(
   return mounts;
 }
 
+const SENSITIVE_ENV_PATTERN = /(token|key|secret|password|credential)/i;
+
+/** @internal - exported for testing */
+export function redactContainerArgs(args: string[]): string[] {
+  const redacted: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '-e' && i + 1 < args.length) {
+      const next = args[i + 1];
+      const eq = next.indexOf('=');
+      if (eq > 0) {
+        const key = next.slice(0, eq);
+        if (SENSITIVE_ENV_PATTERN.test(key)) {
+          redacted.push('-e', `${key}=[REDACTED]`);
+          i++;
+          continue;
+        }
+      }
+    }
+    redacted.push(arg);
+  }
+  return redacted;
+}
+
 function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
@@ -328,7 +352,7 @@ function writeContainerLog(
       JSON.stringify(ctx.input, null, 2),
       ``,
       `=== Container Args ===`,
-      ctx.containerArgs.join(' '),
+      redactContainerArgs(ctx.containerArgs).join(' '),
       ``,
       `=== Mounts ===`,
       ctx.mounts
@@ -420,7 +444,7 @@ export async function runContainerAgent(
         (m) =>
           `${m.hostPath} -> ${m.containerPath}${m.readonly ? ' (ro)' : ''}`,
       ),
-      containerArgs: containerArgs.join(' '),
+      containerArgs: redactContainerArgs(containerArgs).join(' '),
     },
     'Container mount configuration',
   );
