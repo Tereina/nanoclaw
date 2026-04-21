@@ -639,8 +639,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                       responseFile,
                       JSON.stringify({
                         requestId: data.requestId,
-                        error:
-                          err instanceof Error ? err.message : String(err),
+                        error: err instanceof Error ? err.message : String(err),
                       }),
                     );
                   }

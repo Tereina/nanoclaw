@@ -184,8 +184,9 @@ export async function runGcloudCommand(
           }
           // Non-zero exit is common (e.g. not-found) — return it as a result,
           // not a throw, so the agent can see what gcloud said.
-          const code =
-            (err as NodeJS.ErrnoException & { code?: number | string }).code;
+          const code = (
+            err as NodeJS.ErrnoException & { code?: number | string }
+          ).code;
           resolve({
             stdout: stdoutStr,
             stderr: stderrStr,

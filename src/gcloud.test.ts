@@ -35,9 +35,9 @@ describe('validateGcloudCommand', () => {
     });
 
     it('allows compute instances list', () => {
-      expect(
-        validateGcloudCommand(['compute', 'instances', 'list']),
-      ).toEqual({ ok: true });
+      expect(validateGcloudCommand(['compute', 'instances', 'list'])).toEqual({
+        ok: true,
+      });
     });
 
     it('tolerates a leading "gcloud"', () => {
@@ -52,11 +52,7 @@ describe('validateGcloudCommand', () => {
 
     it('allows get-iam-policy', () => {
       expect(
-        validateGcloudCommand([
-          'projects',
-          'get-iam-policy',
-          'my-project',
-        ]),
+        validateGcloudCommand(['projects', 'get-iam-policy', 'my-project']),
       ).toEqual({ ok: true });
     });
   });
@@ -73,13 +69,16 @@ describe('validateGcloudCommand', () => {
       ['enable', ['services', 'enable', 'svc']],
       ['start', ['compute', 'instances', 'start', 'vm']],
       ['stop', ['compute', 'instances', 'stop', 'vm']],
-      ['add-iam-policy-binding', [
-        'projects',
+      [
         'add-iam-policy-binding',
-        'p',
-        '--member=user:a@b.com',
-        '--role=roles/owner',
-      ]],
+        [
+          'projects',
+          'add-iam-policy-binding',
+          'p',
+          '--member=user:a@b.com',
+          '--role=roles/owner',
+        ],
+      ],
     ])('rejects %s', (_label, command) => {
       const result = validateGcloudCommand(command);
       expect(result.ok).toBe(false);
