@@ -1,0 +1,11 @@
+{
+  "$comment": "Opt-in list of skills to pull from a claude-plugins marketplace checkout into container/skills/, so nanoclaw agents can use them. The marketplace stays the single source of truth; the copies synced here are generated artifacts (gitignored). Add an entry, then run `npm run sync-skills`. To pull EVERY plugin's skills instead, set \"all\": true.",
+  "source": "../claude-plugins",
+  "all": false,
+  "skills": [
+    {
+      "plugin": "weekly-update",
+      "skill": "weekly-update"
+    }
+  ]
+}
